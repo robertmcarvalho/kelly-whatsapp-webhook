@@ -33,10 +33,23 @@ async def receber_mensagem(request: Request):
     resposta_texto = resposta.json().get("resposta", "Não consegui entender. Pode repetir?")
 
     # Enviar resposta via Z-API (ou outro provedor)
-    envio = requests.post(
-        ZAPI_URL,
-        json={"number": numero, "message": resposta_texto},
-        headers={"Authorization": f"Bearer {ZAPI_TOKEN}", "Content-Type": "application/json"}
-    )
+import urllib.parse
+
+# Formatando o número para padrão internacional
+numero_formatado = numero if numero.startswith("+") else f"+55{numero}"
+
+payload = {
+    "token": os.getenv("ULTRAMSG_TOKEN"),
+    "to": numero_formatado,
+    "body": resposta_texto
+}
+
+url = f"https://api.ultramsg.com/{os.getenv('ULTRAMSG_INSTANCE_ID')}/messages/chat"
+
+headers = {
+    "Content-Type": "application/x-www-form-urlencoded"
+}
+
+envio = requests.post(url, data=urllib.parse.urlencode(payload), headers=headers)
 
     return {"status": "ok", "resposta_enviada": resposta_texto}
