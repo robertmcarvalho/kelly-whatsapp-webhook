@@ -2,14 +2,13 @@ from fastapi import FastAPI, Request
 import requests
 import os
 from dotenv import load_dotenv
+import urllib.parse
 
 load_dotenv()
 
 app = FastAPI()
 
 AGENTE_KELLY_API = os.getenv("AGENTE_KELLY_API", "https://web-production-xxxxxx.up.railway.app/mensagem")
-ZAPI_URL = os.getenv("ZAPI_URL", "https://zapi.provedor.com/send-message")
-ZAPI_TOKEN = os.getenv("ZAPI_TOKEN", "SEU_TOKEN_AQUI")
 
 @app.post("/webhook")
 async def receber_mensagem(request: Request):
@@ -32,24 +31,26 @@ async def receber_mensagem(request: Request):
 
     resposta_texto = resposta.json().get("resposta", "Não consegui entender. Pode repetir?")
 
-    # Enviar resposta via Z-API (ou outro provedor)
-import urllib.parse
+    # Enviar resposta via UltraMsg
+    numero_formatado = numero if numero.startswith("+") else f"+55{numero}"
 
-# Formatando o número para padrão internacional
-numero_formatado = numero if numero.startswith("+") else f"+55{numero}"
+    payload = {
+        "token": os.getenv("ULTRAMSG_TOKEN"),
+        "to": numero_formatado,
+        "body": resposta_texto
+    }
 
-payload = {
-    "token": os.getenv("ULTRAMSG_TOKEN"),
-    "to": numero_formatado,
-    "body": resposta_texto
-}
+    url = f"https://api.ultramsg.com/{os.getenv('ULTRAMSG_INSTANCE_ID')}/messages/chat"
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
 
-url = f"https://api.ultramsg.com/{os.getenv('ULTRAMSG_INSTANCE_ID')}/messages/chat"
+    envio = requests.post(url, data=urllib.parse.urlencode(payload), headers=headers)
 
-headers = {
-    "Content-Type": "application/x-www-form-urlencoded"
-}
-
-envio = requests.post(url, data=urllib.parse.urlencode(payload), headers=headers)
-
-    return {"status": "ok", "resposta_enviada": resposta_texto}
+    return {
+        "status": "ok",
+        "numero": numero_formatado,
+        "resposta_enviada": resposta_texto,
+        "ultramsg_status": envio.status_code,
+        "ultramsg_retorno": envio.text
+    }
