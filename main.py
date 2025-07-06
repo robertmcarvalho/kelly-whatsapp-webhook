@@ -1,21 +1,21 @@
 from fastapi import FastAPI, Request
-import httpx
+from pydantic import BaseModel
 import os
+import httpx
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
 app = FastAPI()
 
+# Credenciais da UltraMsg via .env
 ULTRAMSG_INSTANCE_ID = os.getenv("ULTRAMSG_INSTANCE_ID")
 ULTRAMSG_TOKEN = os.getenv("ULTRAMSG_TOKEN")
 
-# IA Kelly usando Together
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
-TOGETHER_MODEL = "mistralai/Mistral-7B-Instruct-v0.1"
-
+# Prompt da agente Kelly
 SYSTEM_PROMPT = """
-Você é Kelly, agente de RH da cooperativa CoopMob. Sua missão é conversar com entregadores interessados em trabalhar como cooperados.
+Você é Kelly, agente de RH da cooperativa CoopMob. Sua missão é conversar com entregadores interessados em trabalhar como cooperados. 
 Explique o funcionamento da cooperativa: sem vínculo empregatício, pagamentos semanais às quintas, cota de entrada de R$500, parcelável em até 25x com desconto em folha (segunda quinta do mês).
 Explique também que é obrigatória a bag térmica (R$180 + frete, fornecida pela cooperativa se necessário) e o uniforme (camiseta R$47 + frete, sendo metade pago pela cooperativa e metade pelo cooperado, com desconto em folha também na segunda quinta do mês).
 Depois, faça perguntas para triagem com base no perfil ideal:
@@ -31,41 +31,40 @@ Depois, faça perguntas para triagem com base no perfil ideal:
 Avalie e classifique como Aprovado, Em Análise ou Reprovado.
 """
 
-async def gerar_resposta_kelly(pergunta_usuario: str) -> str:
+@app.post("/webhook")
+async def receber_mensagem(request: Request):
+    payload = await request.json()
+    numero = payload.get("from")
+    mensagem_usuario = payload.get("body")
+
+    if not numero or not mensagem_usuario:
+        return {"erro": "Dados ausentes"}
+
+    resposta = await obter_resposta_da_kelly(mensagem_usuario)
+    await enviar_resposta(numero, resposta)
+    return {"status": "Mensagem processada com sucesso"}
+
+async def obter_resposta_da_kelly(mensagem_usuario: str) -> str:
     async with httpx.AsyncClient() as client:
-        resposta = await client.post(
+        response = await client.post(
             "https://api.together.xyz/v1/chat/completions",
-            headers={"Authorization": f"Bearer {TOGETHER_API_KEY}"},
+            headers={"Authorization": f"Bearer {os.getenv('TOGETHER_API_KEY')}"},
             json={
-                "model": TOGETHER_MODEL,
+                "model": "deepseek-chat",
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": pergunta_usuario}
+                    {"role": "user", "content": mensagem_usuario}
                 ],
                 "temperature": 0.4
             }
         )
-        resultado = resposta.json()
-        return resultado["choices"][0]["message"]["content"]
+        data = response.json()
+        return data.get("choices", [{}])[0].get("message", {}).get("content", "Erro ao gerar resposta.")
 
-@app.post("/webhook")
-async def receber_whatsapp(request: Request):
-    dados = await request.json()
-    try:
-        texto = dados["message"]
-        numero = dados["from"]
-        resposta_kelly = await gerar_resposta_kelly(texto)
-
-        async with httpx.AsyncClient() as client:
-            await client.get(
-                f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE_ID}/messages/chat",
-                params={
-                    "token": ULTRAMSG_TOKEN,
-                    "to": numero,
-                    "body": resposta_kelly
-                }
-            )
-
-        return {"status": "mensagem enviada", "para": numero, "resposta": resposta_kelly}
-    except Exception as e:
-        return {"erro": str(e), "payload_recebido": dados}
+async def enviar_resposta(numero_destino: str, mensagem: str):
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE_ID}/messages/chat",
+            params={"token": ULTRAMSG_TOKEN},
+            data={"to": numero_destino, "body": mensagem}
+        )
